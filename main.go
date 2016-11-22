@@ -126,13 +126,13 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 		seqNum:      NewFileSeqnum("test", ms),
 	}
 
-	var authTokenResp []byte
-
 	for {
-		authTokenResp, _ = authReq.Request(c, backendHost, mgr)
-		if len(authTokenResp) > 0 {
+		if authTokenResp, err := authReq.Request(c, backendHost, mgr); err == nil && len(authTokenResp) > 0 {
 			return client.AuthToken(authTokenResp)
-		}
+		} else if err != nil {
+            log.Debug("not able to authorize client: ", err)
+        }
+
 		time.Sleep(5 * time.Second)
 	}
 }
