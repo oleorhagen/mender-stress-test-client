@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	mrand "math/rand"
 	"net/http"
 	"os"
@@ -26,6 +27,7 @@ var (
 	backendHost              string
 	inventoryItems           string
 	updateFailMsg            string
+	debugMode                bool
 )
 
 type FakeMenderAuthManager struct {
@@ -44,33 +46,67 @@ func init() {
 	flag.StringVar(&inventoryItems, "inventory", "device_type:test,image_id:test,client_version:test", "inventory key:value pairs distinguished with ','")
 	flag.StringVar(&updateFailMsg, "fail", "", "fail update with specified message")
 	flag.IntVar(&pollFrequency, "pollfreq", 5, "how often to poll the backend")
-
+	flag.BoolVar(&debugMode, "debug", true, "debug output")
 	mrand.Seed(time.Now().UnixNano())
 }
 
 func main() {
+	flag.Parse()
+
 	if len(os.Args) == 1 {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	flag.Parse()
+	if debugMode {
+		log.SetLevel(log.DebugLevel)
+	}
 
 	for i := 0; i < menderClientCount; i++ {
-		key, _ := rsa.GenerateKey(rand.Reader, RsaKeyLength)
-		go fakeclient(key)
+		key, err := rsa.GenerateKey(rand.Reader, RsaKeyLength)
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		go clientScheduler(key)
 	}
 
 	// block forever
 	select {}
 }
 
-func fakeclient(sharedPrivateKey *rsa.PrivateKey) {
-	isAuthenticated := false
+func clientScheduler(sharedPrivateKey *rsa.PrivateKey) {
+	clientUpdateTicker := time.NewTicker(time.Second * time.Duration(pollFrequency))
+	clientInventoryTicker := time.NewTicker(time.Second * time.Duration(inventoryUpdateFrequency))
 
+	api, err := client.New(client.Config{
+		IsHttps:  true,
+		NoVerify: true,
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	token := clientAuthenticate(api, sharedPrivateKey)
+
+	for {
+		select {
+		case <-clientInventoryTicker.C:
+			sendInventoryUpdate(api, token)
+
+		case <-clientUpdateTicker.C:
+			checkForNewUpdate(api, token)
+		}
+	}
+}
+
+func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) client.AuthToken {
 	buf := make([]byte, 6)
 	rand.Read(buf)
 	fakeMACaddress := fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5])
+	log.Debug("created device with fake mac address: ", fakeMACaddress)
 
 	identityData := map[string]string{"mac": fakeMACaddress}
 	encdata, _ := json.Marshal(identityData)
@@ -78,17 +114,8 @@ func fakeclient(sharedPrivateKey *rsa.PrivateKey) {
 	ms := utils.NewMemStore()
 	kstore := NewKeystore(ms, "")
 
+	// use a single share private key due to high CPU usage bottleneck in go routines
 	kstore.private = sharedPrivateKey
-
-	api, err := client.New(client.Config{
-		IsHttps:  false,
-		NoVerify: true,
-	})
-
-	if err != nil {
-		log.Errorf("Error creating client: %s", err)
-	}
-
 	authReq := client.NewAuth()
 
 	mgr := &FakeMenderAuthManager{
@@ -99,28 +126,28 @@ func fakeclient(sharedPrivateKey *rsa.PrivateKey) {
 		seqNum:      NewFileSeqnum("test", ms),
 	}
 
-	updater := client.NewUpdate()
-	authTokenResp := make([]byte, 2048)
+	var authTokenResp []byte
 
 	for {
-		if isAuthenticated == false {
-			authTokenResp, _ = authReq.Request(api, backendHost, mgr)
-			if len(authTokenResp) > 0 {
-				isAuthenticated = true
-			}
-			time.Sleep(5 * time.Second)
-			continue
+		authTokenResp, _ = authReq.Request(c, backendHost, mgr)
+		if len(authTokenResp) > 0 {
+			return client.AuthToken(authTokenResp)
 		}
+		time.Sleep(5 * time.Second)
+	}
+}
 
-		go sendInventoryUpdate(api.Request(client.AuthToken(authTokenResp)), backendHost)
-		haveUpdate, _ := updater.GetScheduledUpdate(api.Request(client.AuthToken(authTokenResp)), backendHost)
+func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
+	updater := client.NewUpdate()
+	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost)
 
-		if haveUpdate != nil {
-			u := haveUpdate.(client.UpdateResponse)
-			performFakeUpdate(u.Image.URI, u.ID, api.Request(client.AuthToken(authTokenResp)))
-		}
+	if err != nil {
+		log.Info("failed when checking for new updates")
+	}
 
-		time.Sleep(time.Duration(pollFrequency) * time.Second)
+	if haveUpdate != nil {
+		u := haveUpdate.(client.UpdateResponse)
+		performFakeUpdate(u.Image.URI, u.ID, c.Request(client.AuthToken(token)))
 	}
 }
 
@@ -136,8 +163,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 
 	for _, event := range reportingCycle {
 		if event == "downloading" {
-			err := downloadToDevNull(url)
-			if err != nil {
+			if err := downloadToDevNull(url); err != nil {
 				log.Fatal("failed to download update: ", err)
 				return
 			}
@@ -152,7 +178,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 			}
 
 			if err := logUploader.Upload(token, backendHost, ld); err != nil {
-				log.Errorf("failed to deliver fail logs to backend: " + err.Error())
+				log.Fatal("failed to deliver fail logs to backend: " + err.Error())
 				return
 			}
 		}
@@ -161,53 +187,44 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 		err := s.Report(token, backendHost, report)
 
 		if err != nil {
-			log.Error("error reporting update status: ", err.Error())
+			log.Fatal("error reporting update status: ", err.Error())
 		}
 		time.Sleep(time.Duration(mrand.Intn(maxWaitSteps)) * time.Second)
 	}
 }
 
-func sendInventoryUpdate(token client.ApiRequester, server string) {
-	t := time.NewTicker(time.Second * time.Duration(inventoryUpdateFrequency))
-
-	var invitems []client.InventoryAttribute
+func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken) {
+	var invAttrs []client.InventoryAttribute
 	for _, e := range strings.Split(inventoryItems, ",") {
 		pair := strings.Split(e, ":")
 		if pair != nil {
 			key := pair[0]
 			value := pair[1]
 			i := client.InventoryAttribute{Name: key, Value: value}
-			invitems = append(invitems, i)
+			invAttrs = append(invAttrs, i)
 		}
 	}
 
-	count := 0
-	for {
-		log.Info("submitting inventory update with: ", invitems)
-		ic := client.NewInventory()
-		ic.Submit(token, server, invitems)
-		count++
-		<-t.C
+	log.Debug("submitting inventory update with: ", invAttrs)
+	if err := client.NewInventory().Submit(c.Request(client.AuthToken(token)), backendHost, invAttrs); err != nil {
+		log.Fatal("failed sending inventory")
 	}
 }
 
 func downloadToDevNull(url string) error {
-	devnull, err := os.OpenFile("/dev/null", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
-
-	if err != nil {
-		return err
-	}
 
 	resp, err := http.Get(url)
 	if err != nil {
+		log.Error("failed grabbing update: ", url)
 		return err
 	}
 	defer resp.Body.Close()
 
-	_, err = io.Copy(devnull, resp.Body)
+	_, err = io.Copy(ioutil.Discard, resp.Body)
 
 	if err != nil {
 		return err
 	}
+	log.Debug("downloaded update successfully to /dev/null")
 	return nil
 }
