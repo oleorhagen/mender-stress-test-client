@@ -1,0 +1,23 @@
+language:
+- go
+
+go:
+- 1.7.3
+- tip
+install:
+- go get ./...
+before_script:
+- go vet .
+- if [[ -n `go fmt` ]]; then echo "go fmt validation failed" && exit 1; fi
+script:
+- go build -o build
+deploy:
+    provider: s3
+    access_key_id: $AWS_ACCESS_KEY_ID
+    secret_access_key: $AWS_SECRET_ACCESS_KEY
+    bucket: $AWS_BUCKET
+    region: $AWS_REGION
+    upload-dir: $DEPLOY_REPO/release/$TRAVIS_TAG/
+    local_dir: build
+    skip_cleanup: true
+    acl: $AWS_S3_ACL
