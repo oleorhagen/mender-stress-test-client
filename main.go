@@ -145,7 +145,7 @@ func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost)
 
 	if err != nil {
-		log.Info("failed when checking for new updates")
+		log.Info("failed when checking for new updates with: ", err.Error())
 	}
 
 	if haveUpdate != nil {
