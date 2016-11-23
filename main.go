@@ -62,8 +62,11 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 
+	randSource := mrand.NewSource(time.Now().UnixNano())
 	for i := 0; i < menderClientCount; i++ {
-		key, err := rsa.GenerateKey(rand.Reader, RsaKeyLength)
+
+		// use faster random instead of crypto safe random for speed boot during testing
+		key, err := rsa.GenerateKey(mrand.New(randSource), RsaKeyLength)
 
 		if err != nil {
 			log.Fatal(err)
