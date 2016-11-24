@@ -167,7 +167,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 	for _, event := range reportingCycle {
 		if event == "downloading" {
 			if err := downloadToDevNull(url); err != nil {
-				log.Fatal("failed to download update: ", err)
+				log.Warn("failed to download update: ", err)
 				return
 			}
 		}
@@ -181,7 +181,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 			}
 
 			if err := logUploader.Upload(token, backendHost, ld); err != nil {
-				log.Fatal("failed to deliver fail logs to backend: " + err.Error())
+				log.Warn("failed to deliver fail logs to backend: " + err.Error())
 				return
 			}
 		}
@@ -190,7 +190,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 		err := s.Report(token, backendHost, report)
 
 		if err != nil {
-			log.Fatal("error reporting update status: ", err.Error())
+			log.Warn("error reporting update status: ", err.Error())
 		}
 		time.Sleep(time.Duration(mrand.Intn(maxWaitSteps)) * time.Second)
 	}
