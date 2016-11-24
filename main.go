@@ -210,7 +210,7 @@ func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken) {
 
 	log.Debug("submitting inventory update with: ", invAttrs)
 	if err := client.NewInventory().Submit(c.Request(client.AuthToken(token)), backendHost, invAttrs); err != nil {
-		log.Fatal("failed sending inventory")
+		log.Warn("failed sending inventory with: ", err.Error())
 	}
 }
 
