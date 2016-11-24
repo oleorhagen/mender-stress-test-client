@@ -136,7 +136,7 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 			log.Debug("not able to authorize client: ", err)
 		}
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(pollFrequency * time.Second)
 	}
 }
 
