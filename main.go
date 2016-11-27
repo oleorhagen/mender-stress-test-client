@@ -97,7 +97,8 @@ func clientScheduler(sharedPrivateKey *rsa.PrivateKey) {
 	for {
 		select {
 		case <-clientInventoryTicker.C:
-			sendInventoryUpdate(api, token)
+			invItems := parseInventoryItems()
+			sendInventoryUpdate(api, token, invItems)
 
 		case <-clientUpdateTicker.C:
 			checkForNewUpdate(api, token)
@@ -196,18 +197,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 	}
 }
 
-func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken) {
-	var invAttrs []client.InventoryAttribute
-	for _, e := range strings.Split(inventoryItems, ",") {
-		pair := strings.Split(e, ":")
-		if pair != nil {
-			key := pair[0]
-			value := pair[1]
-			i := client.InventoryAttribute{Name: key, Value: value}
-			invAttrs = append(invAttrs, i)
-		}
-	}
-
+func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken, invAttrs []client.InventoryAttribute) {
 	log.Debug("submitting inventory update with: ", invAttrs)
 	if err := client.NewInventory().Submit(c.Request(client.AuthToken(token)), backendHost, invAttrs); err != nil {
 		log.Warn("failed sending inventory with: ", err.Error())
@@ -230,4 +220,18 @@ func downloadToDevNull(url string) error {
 	}
 	log.Debug("downloaded update successfully to /dev/null")
 	return nil
+}
+
+func parseInventoryItems() []client.InventoryAttribute {
+	var invAttrs []client.InventoryAttribute
+	for _, e := range strings.Split(inventoryItems, ",") {
+		pair := strings.Split(e, ":")
+		if pair != nil {
+			key := pair[0]
+			value := pair[1]
+			i := client.InventoryAttribute{Name: key, Value: value}
+			invAttrs = append(invAttrs, i)
+		}
+	}
+	return invAttrs
 }
