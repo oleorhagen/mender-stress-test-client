@@ -193,7 +193,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 		if err != nil {
 			log.Warn("error reporting update status: ", err.Error())
 		}
-		time.Sleep(time.Duration(mrand.Intn(maxWaitSteps)) * time.Second)
+		time.Sleep(15 + time.Duration(mrand.Intn(maxWaitSteps))*time.Second)
 	}
 }
 
