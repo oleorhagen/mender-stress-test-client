@@ -41,11 +41,11 @@ type FakeMenderAuthManager struct {
 func init() {
 	flag.IntVar(&menderClientCount, "count", 100, "amount of fake mender clients to spawn")
 	flag.IntVar(&maxWaitSteps, "wait", 45, "max. amount of time to wait between update steps")
-	flag.IntVar(&inventoryUpdateFrequency, "invfreq", 30, "amount of time to wait between inventory updates")
+	flag.IntVar(&inventoryUpdateFrequency, "invfreq", 600, "amount of time to wait between inventory updates")
 	flag.StringVar(&backendHost, "backend", "https://localhost:8080", "entire URI to the backend")
 	flag.StringVar(&inventoryItems, "inventory", "device_type:test,image_id:test,client_version:test", "inventory key:value pairs distinguished with ','")
 	flag.StringVar(&updateFailMsg, "fail", "", "fail update with specified message")
-	flag.IntVar(&pollFrequency, "pollfreq", 5, "how often to poll the backend")
+	flag.IntVar(&pollFrequency, "pollfreq", 600, "how often to poll the backend")
 	flag.BoolVar(&debugMode, "debug", true, "debug output")
 	mrand.Seed(time.Now().UnixNano())
 }
