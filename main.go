@@ -143,7 +143,8 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 
 func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 	updater := client.NewUpdate()
-	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost)
+
+	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost, client.CurrentUpdate{})
 
 	if err != nil {
 		log.Info("failed when checking for new updates with: ", err.Error())
