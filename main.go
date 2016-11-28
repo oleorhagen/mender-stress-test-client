@@ -40,7 +40,7 @@ type FakeMenderAuthManager struct {
 
 func init() {
 	flag.IntVar(&menderClientCount, "count", 100, "amount of fake mender clients to spawn")
-	flag.IntVar(&maxWaitSteps, "wait", 45, "max. amount of time to wait between update steps")
+	flag.IntVar(&maxWaitSteps, "wait", 600, "max. amount of time to wait between update steps: download image, install, reboot, success/failure")
 	flag.IntVar(&inventoryUpdateFrequency, "invfreq", 600, "amount of time to wait between inventory updates")
 	flag.StringVar(&backendHost, "backend", "https://localhost:8080", "entire URI to the backend")
 	flag.StringVar(&inventoryItems, "inventory", "device_type:test,image_id:test,client_version:test", "inventory key:value pairs distinguished with ','")
@@ -98,7 +98,7 @@ func clientScheduler(sharedPrivateKey *rsa.PrivateKey) {
 		select {
 		case <-clientInventoryTicker.C:
 			invItems := parseInventoryItems()
-			sendInventoryUpdate(api, token, invItems)
+			sendInventoryUpdate(api, token, &invItems)
 
 		case <-clientUpdateTicker.C:
 			checkForNewUpdate(api, token)
@@ -167,6 +167,7 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 	}
 
 	for _, event := range reportingCycle {
+		time.Sleep(15 + time.Duration(mrand.Intn(maxWaitSteps))*time.Second)
 		if event == "downloading" {
 			if err := downloadToDevNull(url); err != nil {
 				log.Warn("failed to download update: ", err)
@@ -194,11 +195,10 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 		if err != nil {
 			log.Warn("error reporting update status: ", err.Error())
 		}
-		time.Sleep(15 + time.Duration(mrand.Intn(maxWaitSteps))*time.Second)
 	}
 }
 
-func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken, invAttrs []client.InventoryAttribute) {
+func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken, invAttrs *[]client.InventoryAttribute) {
 	log.Debug("submitting inventory update with: ", invAttrs)
 	if err := client.NewInventory().Submit(c.Request(client.AuthToken(token)), backendHost, invAttrs); err != nil {
 		log.Warn("failed sending inventory with: ", err.Error())
