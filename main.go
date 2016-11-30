@@ -152,7 +152,7 @@ func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 
 	if haveUpdate != nil {
 		u := haveUpdate.(client.UpdateResponse)
-		performFakeUpdate(u.Image.URI, u.ID, c.Request(client.AuthToken(token)))
+		performFakeUpdate(u.Artifact.Source.URI, u.ID, c.Request(client.AuthToken(token)))
 	}
 }
 
