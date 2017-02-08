@@ -29,10 +29,6 @@ func (m *FakeMenderAuthManager) MakeAuthRequest() (*client.AuthRequest, error) {
 	// fill tenant token
 	authd.TenantToken = string(tentok)
 
-	// fetch sequence number
-	num, _ := m.seqNum.Get()
-	authd.SeqNumber = num
-
 	log.Debugf("authorization data: %v", authd)
 
 	reqdata, err := authd.ToBytes()
