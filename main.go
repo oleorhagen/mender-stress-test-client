@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -27,6 +28,8 @@ var (
 	backendHost              string
 	inventoryItems           string
 	updateFailMsg            string
+	currentArtifact          string
+	currentDeviceType        string
 	debugMode                bool
 )
 
@@ -45,6 +48,10 @@ func init() {
 	flag.StringVar(&backendHost, "backend", "https://localhost:8080", "entire URI to the backend")
 	flag.StringVar(&inventoryItems, "inventory", "device_type:test,image_id:test,client_version:test", "inventory key:value pairs distinguished with ','")
 	flag.StringVar(&updateFailMsg, "fail", "", "fail update with specified message")
+
+	flag.StringVar(&currentArtifact, "current_artifact", "test", "current installed artifact")
+	flag.StringVar(&currentDeviceType, "current_device", "test", "current device type")
+
 	flag.IntVar(&pollFrequency, "pollfreq", 600, "how often to poll the backend")
 	flag.BoolVar(&debugMode, "debug", true, "debug output")
 	mrand.Seed(time.Now().UnixNano())
@@ -144,7 +151,7 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 	updater := client.NewUpdate()
 
-	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost, client.CurrentUpdate{})
+	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost, client.CurrentUpdate{DeviceType: currentDeviceType, Artifact: currentArtifact})
 
 	if err != nil {
 		log.Info("failed when checking for new updates with: ", err.Error())
@@ -205,8 +212,13 @@ func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken, invAttrs *
 }
 
 func downloadToDevNull(url string) error {
+	log.Info("downloading url")
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 
-	resp, err := http.Get(url)
+	resp, err := client.Get(url)
 	if err != nil {
 		log.Error("failed grabbing update: ", url)
 		return err
