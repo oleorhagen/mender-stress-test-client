@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mendersoftware/log"
@@ -28,9 +29,15 @@ var (
 	backendHost              string
 	inventoryItems           string
 	updateFailMsg            string
+	updateFailCount          int
 	currentArtifact          string
 	currentDeviceType        string
 	debugMode                bool
+
+	updatesPerformed  int
+	updatesLeftToFail int
+
+	lock sync.Mutex
 )
 
 type FakeMenderAuthManager struct {
@@ -47,14 +54,18 @@ func init() {
 	flag.IntVar(&inventoryUpdateFrequency, "invfreq", 600, "amount of time to wait between inventory updates")
 	flag.StringVar(&backendHost, "backend", "https://localhost", "entire URI to the backend")
 	flag.StringVar(&inventoryItems, "inventory", "device_type:test,image_id:test,client_version:test", "inventory key:value pairs distinguished with ','")
-	flag.StringVar(&updateFailMsg, "fail", "", "fail update with specified message")
+	flag.StringVar(&updateFailMsg, "fail", strings.Repeat("failed, damn!", 3), "fail update with specified message")
+	flag.IntVar(&updateFailCount, "failcount", 1, "amount of clients that will fail an update")
 
 	flag.StringVar(&currentArtifact, "current_artifact", "test", "current installed artifact")
 	flag.StringVar(&currentDeviceType, "current_device", "test", "current device type")
 
 	flag.IntVar(&pollFrequency, "pollfreq", 600, "how often to poll the backend")
 	flag.BoolVar(&debugMode, "debug", true, "debug output")
+
 	mrand.Seed(time.Now().UnixNano())
+
+	updatesPerformed = 0
 }
 
 func main() {
@@ -68,6 +79,8 @@ func main() {
 	if debugMode {
 		log.SetLevel(log.DebugLevel)
 	}
+
+	updatesLeftToFail = updateFailCount
 
 	randSource := mrand.NewSource(time.Now().UnixNano())
 	for i := 0; i < menderClientCount; i++ {
@@ -149,8 +162,13 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 }
 
 func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
-	updater := client.NewUpdate()
 
+	// if we performed an update for all the devices, we should reset the number of failed updates to perform
+	if updatesPerformed > 0 && updatesPerformed%menderClientCount == 0 {
+		updatesLeftToFail = updateFailCount
+	}
+
+	updater := client.NewUpdate()
 	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost, client.CurrentUpdate{DeviceType: currentDeviceType, Artifact: currentArtifact})
 
 	if err != nil {
@@ -167,11 +185,15 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 	s := client.NewStatus()
 	reportingCycle := []string{"downloading", "installing", "rebooting"}
 
-	if len(updateFailMsg) > 0 {
+	lock.Lock()
+	if len(updateFailMsg) > 0 && updatesLeftToFail > 0 {
 		reportingCycle = append(reportingCycle, "failure")
+		updatesLeftToFail -= 1
 	} else {
 		reportingCycle = append(reportingCycle, "success")
 	}
+	updatesPerformed += 1
+	lock.Unlock()
 
 	for _, event := range reportingCycle {
 		time.Sleep(15 + time.Duration(mrand.Intn(maxWaitSteps))*time.Second)
@@ -245,5 +267,8 @@ func parseInventoryItems() []client.InventoryAttribute {
 			invAttrs = append(invAttrs, i)
 		}
 	}
+	// add a dynamic inventory inventoryItems
+	i := client.InventoryAttribute{Name: "time", Value: time.Now().Unix()}
+	invAttrs = append(invAttrs, i)
 	return invAttrs
 }
