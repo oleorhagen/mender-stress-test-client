@@ -37,12 +37,14 @@ var (
 	updatesPerformed  int
 	updatesLeftToFail int
 
+	tenantToken string
+
 	lock sync.Mutex
 )
 
 type FakeMenderAuthManager struct {
 	idSrc       []byte
-	tenantToken client.AuthToken
+	tenantToken string
 	store       *utils.MemStore
 	keyStore    *Keystore
 	seqNum      SeqnumGetter
@@ -62,6 +64,8 @@ func init() {
 
 	flag.IntVar(&pollFrequency, "pollfreq", 600, "how often to poll the backend")
 	flag.BoolVar(&debugMode, "debug", true, "debug output")
+
+	flag.StringVar(&tenantToken, "tenant", "", "tenant key for account")
 
 	mrand.Seed(time.Now().UnixNano())
 
@@ -146,7 +150,7 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 		store:       ms,
 		keyStore:    kstore,
 		idSrc:       encdata,
-		tenantToken: client.AuthToken("dummy"),
+		tenantToken: tenantToken,
 		seqNum:      NewFileSeqnum("test", ms),
 	}
 
