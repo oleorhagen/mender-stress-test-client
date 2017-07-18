@@ -14,8 +14,9 @@
 package main
 
 import (
-	"github.com/mendersoftware/mender/utils"
 	"io"
+
+	"github.com/mendersoftware/mender/store"
 )
 
 // wrapper for io.WriteCloser with extra Commit() method
@@ -39,7 +40,7 @@ type Store interface {
 	// open entry 'name' for writing, this may create a temporary entry for
 	// writing data, once finished, one should call Commit() from
 	// WriteCloserCommitter interface
-	OpenWrite(name string) (utils.WriteCloserCommitter, error)
+	OpenWrite(name string) (store.WriteCloserCommitter, error)
 	// remove an entry
 	Remove(name string) error
 	// close the store

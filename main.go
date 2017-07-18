@@ -18,7 +18,7 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
-	"github.com/mendersoftware/mender/utils"
+	"github.com/mendersoftware/mender/store"
 )
 
 var (
@@ -45,7 +45,7 @@ var (
 type FakeMenderAuthManager struct {
 	idSrc       []byte
 	tenantToken string
-	store       *utils.MemStore
+	store       *store.MemStore
 	keyStore    *Keystore
 	seqNum      SeqnumGetter
 }
@@ -139,7 +139,7 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 	identityData := map[string]string{"mac": fakeMACaddress}
 	encdata, _ := json.Marshal(identityData)
 
-	ms := utils.NewMemStore()
+	ms := store.NewMemStore()
 	kstore := NewKeystore(ms, "")
 
 	// use a single share private key due to high CPU usage bottleneck in go routines
