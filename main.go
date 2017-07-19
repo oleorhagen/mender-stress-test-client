@@ -54,7 +54,7 @@ func init() {
 	flag.IntVar(&menderClientCount, "count", 100, "amount of fake mender clients to spawn")
 	flag.IntVar(&maxWaitSteps, "wait", 1800, "max. amount of time to wait between update steps: download image, install, reboot, success/failure")
 	flag.IntVar(&inventoryUpdateFrequency, "invfreq", 600, "amount of time to wait between inventory updates")
-	flag.StringVar(&backendHost, "backend", "https://localhost", "entire URI to the backend")
+	flag.StringVar(&backendHost, "backend", "https://docker.mender.io", "entire URI to the backend")
 	flag.StringVar(&inventoryItems, "inventory", "device_type:test,image_id:test,client_version:test", "inventory key:value pairs distinguished with ','")
 	flag.StringVar(&updateFailMsg, "fail", strings.Repeat("failed, damn!", 3), "fail update with specified message")
 	flag.IntVar(&updateFailCount, "failcount", 1, "amount of clients that will fail an update")
