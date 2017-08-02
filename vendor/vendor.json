@@ -13,7 +13,21 @@
 			"path": "github.com/mendersoftware/mender/store",
 			"revision": "aa61dc967187258ba13454de9874f056f480084c",
 			"revisionTime": "2017-08-02T15:24:08Z"
-		}
+		},
+		{
+			"checksumSHA1": "Bs/PvN8oDCjaW9r7f01JEZRQQJA=",
+			"comment": "v0.9.0",
+			"path": "github.com/Sirupsen/logrus",
+			"revision": "be52937128b38f1d99787bb476c789e2af1147f1",
+			"revisionTime": "2016-02-02T21:14:36Z"
+		},
+        {
+            "checksumSHA1": "wTMzbLJF+jsrRh5Mk9s0L8HagUU=",
+            "comment": "v0.9.0",
+            "path": "github.com/Sirupsen/logrus/examples/hook",
+            "revision": "be52937128b38f1d99787bb476c789e2af1147f1",
+            "revisionTime": "2016-02-02T21:14:36Z"
+        }
 	],
 	"rootPath": "github.com/mendersoftware/mender-stress-test-client"
 }
