@@ -3,9 +3,9 @@ package main
 import (
 	"strings"
 
+	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 )
 
 func (m *FakeMenderAuthManager) MakeAuthRequest() (*client.AuthRequest, error) {
