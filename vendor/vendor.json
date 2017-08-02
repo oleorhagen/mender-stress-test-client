@@ -1,0 +1,19 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "2MSJCDPLwq1DA+w5uMnUD2pRht8=",
+			"path": "github.com/mendersoftware/mender/client",
+			"revision": "aa61dc967187258ba13454de9874f056f480084c",
+			"revisionTime": "2017-08-02T15:24:08Z"
+		},
+		{
+			"checksumSHA1": "A+KvA13Qop1X3Vw9yxshqhbppRI=",
+			"path": "github.com/mendersoftware/mender/store",
+			"revision": "aa61dc967187258ba13454de9874f056f480084c",
+			"revisionTime": "2017-08-02T15:24:08Z"
+		}
+	],
+	"rootPath": "github.com/mendersoftware/mender-stress-test-client"
+}
