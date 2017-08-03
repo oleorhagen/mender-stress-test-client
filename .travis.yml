@@ -2,10 +2,7 @@ language:
 - go
 
 go:
-- 1.7.3
 - tip
-install:
-- go get ./...
 before_script:
 - go vet .
 - if [[ -n `go fmt` ]]; then echo "go fmt validation failed" && exit 1; fi
