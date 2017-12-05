@@ -33,6 +33,7 @@ var (
 	currentArtifact          string
 	currentDeviceType        string
 	debugMode                bool
+	substateReporting        bool
 
 	updatesPerformed  int
 	updatesLeftToFail int
@@ -65,6 +66,7 @@ func init() {
 	flag.IntVar(&pollFrequency, "pollfreq", 600, "how often to poll the backend")
 	flag.BoolVar(&debugMode, "debug", true, "debug output")
 
+	flag.BoolVar(&substateReporting, "substate", false, "send substate reporting")
 	flag.StringVar(&tenantToken, "tenant", "", "tenant key for account")
 
 	mrand.Seed(time.Now().UnixNano())
@@ -187,6 +189,7 @@ func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 
 func performFakeUpdate(url string, did string, token client.ApiRequester) {
 	s := client.NewStatus()
+	substate := ""
 	reportingCycle := []string{"downloading", "installing", "rebooting"}
 
 	lock.Lock()
@@ -221,7 +224,18 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 			}
 		}
 
-		report := client.StatusReport{DeploymentID: did, Status: event}
+		switch event {
+		case "downloading":
+			substate = "running predownload script"
+		case "installing":
+			substate = "running preinstalling script"
+		case "rebooting":
+			substate = "running prerebooting script"
+		default:
+			substate = ""
+		}
+
+		report := client.StatusReport{DeploymentID: did, Status: event, SubState: substate}
 		err := s.Report(token, backendHost, report)
 
 		if err != nil {
