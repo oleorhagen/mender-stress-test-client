@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
@@ -12,6 +11,7 @@ import (
 	mrand "math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -46,9 +46,8 @@ var (
 type FakeMenderAuthManager struct {
 	idSrc       []byte
 	tenantToken string
-	store       *store.MemStore
-	keyStore    *Keystore
-	seqNum      SeqnumGetter
+	store       store.Store
+	keyStore    *store.Keystore
 }
 
 func init() {
@@ -88,24 +87,66 @@ func main() {
 
 	updatesLeftToFail = updateFailCount
 
-	randSource := mrand.NewSource(time.Now().UnixNano())
-	for i := 0; i < menderClientCount; i++ {
+	if _, err := os.Stat("keys/"); os.IsNotExist(err) {
+		os.Mkdir("keys", 0700)
+	}
 
-		// use faster random instead of crypto safe random for speed boot during testing
-		key, err := rsa.GenerateKey(mrand.New(randSource), RsaKeyLength)
+	files, _ := filepath.Glob("keys/**")
+	keysMissing := menderClientCount - len(files)
 
-		if err != nil {
-			log.Fatal(err)
+	if keysMissing <= 0 {
+		for i := 0; i < menderClientCount; i++ {
+			go clientScheduler(files[i])
+		}
+	} else {
+
+		for _, file := range files {
+			go clientScheduler(file)
 		}
 
-		go clientScheduler(key)
+		fmt.Printf("%d keys need to be generated..\n", keysMissing)
+
+		for keysMissing > 0 {
+			filename, err := generateClientKeys()
+
+			if err != nil {
+				log.Fatal("failed to generate crypto keys!")
+			}
+
+			go clientScheduler("keys/" + filename)
+			keysMissing--
+		}
+
 	}
+
+	files, _ = filepath.Glob("keys/**")
 
 	// block forever
 	select {}
 }
 
-func clientScheduler(sharedPrivateKey *rsa.PrivateKey) {
+func generateClientKeys() (string, error) {
+	buf := make([]byte, 6)
+	rand.Read(buf)
+
+	fakeMACaddress := fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5])
+	log.Debug("created device with fake mac address: ", fakeMACaddress)
+
+	ms := store.NewDirStore("keys/")
+	kstore := store.NewKeystore(ms, fakeMACaddress)
+
+	if err := kstore.Generate(); err != nil {
+		return "", err
+	}
+
+	if err := kstore.Save(); err != nil {
+		return "", err
+	}
+
+	return fakeMACaddress, nil
+}
+
+func clientScheduler(storeFile string) {
 	clientUpdateTicker := time.NewTicker(time.Second * time.Duration(pollFrequency))
 	clientInventoryTicker := time.NewTicker(time.Second * time.Duration(inventoryUpdateFrequency))
 
@@ -118,7 +159,7 @@ func clientScheduler(sharedPrivateKey *rsa.PrivateKey) {
 		log.Fatal(err)
 	}
 
-	token := clientAuthenticate(api, sharedPrivateKey)
+	token := clientAuthenticate(api, storeFile)
 
 	for {
 		select {
@@ -132,20 +173,15 @@ func clientScheduler(sharedPrivateKey *rsa.PrivateKey) {
 	}
 }
 
-func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) client.AuthToken {
-	buf := make([]byte, 6)
-	rand.Read(buf)
-	fakeMACaddress := fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5])
-	log.Debug("created device with fake mac address: ", fakeMACaddress)
-
-	identityData := map[string]string{"mac": fakeMACaddress}
+func clientAuthenticate(c *client.ApiClient, storeFile string) client.AuthToken {
+	macAddress := filepath.Base(storeFile)
+	identityData := map[string]string{"mac": macAddress}
 	encdata, _ := json.Marshal(identityData)
 
-	ms := store.NewMemStore()
-	kstore := NewKeystore(ms, "")
+	ms := store.NewDirStore(filepath.Dir(storeFile))
+	kstore := store.NewKeystore(ms, macAddress)
+	kstore.Load()
 
-	// use a single share private key due to high CPU usage bottleneck in go routines
-	kstore.private = sharedPrivateKey
 	authReq := client.NewAuth()
 
 	mgr := &FakeMenderAuthManager{
@@ -153,8 +189,9 @@ func clientAuthenticate(c *client.ApiClient, sharedPrivateKey *rsa.PrivateKey) c
 		keyStore:    kstore,
 		idSrc:       encdata,
 		tenantToken: tenantToken,
-		seqNum:      NewFileSeqnum("test", ms),
 	}
+
+	kstore.Save()
 
 	for {
 		if authTokenResp, err := authReq.Request(c, backendHost, mgr); err == nil && len(authTokenResp) > 0 {
