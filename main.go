@@ -18,6 +18,7 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 )
 
@@ -204,6 +205,17 @@ func clientAuthenticate(c *client.ApiClient, storeFile string) client.AuthToken 
 	}
 }
 
+func stressTestClientServerIterator() func() *client.MenderServer {
+	serverIteratorFlipper := true
+	return func() *client.MenderServer {
+		serverIteratorFlipper = !serverIteratorFlipper
+		if serverIteratorFlipper {
+			return nil
+		}
+		return &client.MenderServer{ServerURL: backendHost}
+	}
+}
+
 func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 
 	// if we performed an update for all the devices, we should reset the number of failed updates to perform
@@ -212,15 +224,23 @@ func checkForNewUpdate(c *client.ApiClient, token client.AuthToken) {
 	}
 
 	updater := client.NewUpdate()
-	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token)), backendHost, client.CurrentUpdate{DeviceType: currentDeviceType, Artifact: currentArtifact})
+	haveUpdate, err := updater.GetScheduledUpdate(c.Request(client.AuthToken(token),
+		stressTestClientServerIterator(),
+		func(string) (client.AuthToken, error) {
+			return token, nil
+		}), backendHost, client.CurrentUpdate{DeviceType: currentDeviceType, Artifact: currentArtifact})
 
 	if err != nil {
 		log.Info("failed when checking for new updates with: ", err.Error())
 	}
 
 	if haveUpdate != nil {
-		u := haveUpdate.(client.UpdateResponse)
-		performFakeUpdate(u.Artifact.Source.URI, u.ID, c.Request(client.AuthToken(token)))
+		u := haveUpdate.(datastore.UpdateInfo)
+		performFakeUpdate(u.Artifact.Source.URI, u.ID, c.Request(client.AuthToken(token),
+			stressTestClientServerIterator(),
+			func(string) (client.AuthToken, error) {
+				return token, nil
+			}))
 	}
 }
 
@@ -283,7 +303,12 @@ func performFakeUpdate(url string, did string, token client.ApiRequester) {
 
 func sendInventoryUpdate(c *client.ApiClient, token client.AuthToken, invAttrs *[]client.InventoryAttribute) {
 	log.Debug("submitting inventory update with: ", invAttrs)
-	if err := client.NewInventory().Submit(c.Request(client.AuthToken(token)), backendHost, invAttrs); err != nil {
+	if err := client.NewInventory().Submit(c.Request(client.AuthToken(token),
+		stressTestClientServerIterator(),
+		func(string) (client.AuthToken, error) {
+			return token, nil
+		}),
+		backendHost, invAttrs); err != nil {
 		log.Warn("failed sending inventory with: ", err.Error())
 	}
 }
