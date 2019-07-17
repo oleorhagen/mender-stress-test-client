@@ -1,4 +1,4 @@
-// Copyright 2017 Northern.tech AS
+// Copyright 2019 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@ package client
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -49,10 +52,10 @@ var (
 	//  timeout                             timeout
 	//
 	//  It covers the entire exchange, from Dial (if a connection is not reused)
-	// to reading the body. This is to timeout long lasing connections.
+	// to reading the body. This is to timeout long lasting connections.
 	//
-	// 4 hours shold be enough to download 2GB image file with the
-	// average download spead ~1 mbps
+	// 4 hours should be enough to download a 2GB image file with the
+	// average download speed ~1 mbps
 	defaultClientReadingTimeout = 4 * time.Hour
 
 	// connection keepalive options
@@ -68,6 +71,54 @@ type ApiRequester interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// MenderServer is a placeholder for a full server definition used when
+// multiple servers are given. The fields corresponds to the definitions
+// given in menderConfig.
+type MenderServer struct {
+	ServerURL string
+	// TODO: Move all possible server specific configurations in
+	//       menderConfig over to this struct. (e.g. TenantToken?)
+}
+
+// APIError is an error type returned after receiving an error message from the
+// server. It wraps a regular error with the request_id - and if
+// the server returns an error message, this is also returned.
+type APIError struct {
+	error
+	reqID        string
+	serverErrMsg string
+}
+
+func NewAPIError(err error, resp *http.Response) *APIError {
+	a := APIError{
+		error: err,
+		reqID: resp.Header.Get("request_id"),
+	}
+
+	if resp.StatusCode >= 400 && resp.StatusCode < 600 {
+		a.serverErrMsg = unmarshalErrorMessage(resp.Body)
+	}
+	return &a
+}
+
+func (a *APIError) Error() string {
+
+	err := fmt.Sprintf("(request_id: %s): %s", a.reqID, a.error.Error())
+
+	if a.serverErrMsg != "" {
+		return err + fmt.Sprintf(" server error message: %s", a.serverErrMsg)
+	}
+
+	return err
+
+}
+
+// Cause returns the underlying error, as
+// an APIError is merely an error wrapper.
+func (a *APIError) Cause() error {
+	return a.error
+}
+
 type RequestProcessingFunc func(response *http.Response) (interface{}, error)
 
 // wrapper for http.Client with additional methods
@@ -75,11 +126,19 @@ type ApiClient struct {
 	http.Client
 }
 
-// Return a new ApiRequest sharing this ApiClient helper
-func (a *ApiClient) Request(code AuthToken) *ApiRequest {
+// function type for reauthorization closure (see func reauthorize@mender.go)
+type ClientReauthorizeFunc func(string) (AuthToken, error)
+
+// function type for setting server (in case of multiple fallover servers)
+type ServerManagementFunc func() *MenderServer
+
+// Return a new ApiRequest
+func (a *ApiClient) Request(code AuthToken, nextServerIterator ServerManagementFunc, reauth ClientReauthorizeFunc) *ApiRequest {
 	return &ApiRequest{
-		api:  a,
-		auth: code,
+		api:                a,
+		auth:               code,
+		nextServerIterator: nextServerIterator,
+		revoke:             reauth,
 	}
 }
 
@@ -90,13 +149,88 @@ type ApiRequest struct {
 	api *ApiClient
 	// authorization code to use for requests
 	auth AuthToken
+	// anonymous function to initiate reauthorization
+	revoke ClientReauthorizeFunc
+	// anonymous function to set server
+	nextServerIterator ServerManagementFunc
 }
 
+// tryDo is a wrapper around http.Do that also tries to reauthorize
+// on a 401 response (Unauthorized).
+func (ar *ApiRequest) tryDo(req *http.Request, serverURL string) (*http.Response, error) {
+	r, err := ar.api.Do(req)
+	if err == nil && r.StatusCode == http.StatusUnauthorized {
+		// invalid JWT; most likely the token is expired:
+		// Try to refresh it and reattempt sending the request
+		log.Info("Device unauthorized; attempting reauthorization")
+		if jwt, e := ar.revoke(serverURL); e == nil {
+			// retry API request with new JWT token
+			ar.auth = jwt
+			// check if request had a body
+			// (GetBody is optional, and nil if body is empty)
+			if req.GetBody != nil {
+				if body, e := req.GetBody(); e == nil {
+					req.Body = body
+				}
+			}
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ar.auth))
+			r, err = ar.api.Do(req)
+		} else {
+			log.Warnf("Reauthorization failed with error: %s", e.Error())
+		}
+	}
+	return r, err
+}
+
+// Do is a wrapper for http.Do function for ApiRequests. This function in
+// addition to calling http.Do handles client-server authorization header /
+// reauthorization, as well as attempting failover servers (if given) whenever
+// the server "refuse" to serve the request.
 func (ar *ApiRequest) Do(req *http.Request) (*http.Response, error) {
+	if ar.nextServerIterator == nil {
+		return nil, errors.New("Empty server list!")
+	}
 	if req.Header.Get("Authorization") == "" {
+		// Add JWT to header
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ar.auth))
 	}
-	return ar.api.Do(req)
+	var r *http.Response
+	var host string
+	var err error
+
+	server := ar.nextServerIterator()
+	for {
+		// Split host from URL
+		tmp := strings.Split(server.ServerURL, "://")
+		if len(tmp) == 1 {
+			host = tmp[0]
+		} else {
+			// (len >= 2) should usually be 2
+			host = tmp[1]
+		}
+
+		req.URL.Host = host
+		req.Host = host
+		r, err = ar.tryDo(req, server.ServerURL)
+		if err == nil && r.StatusCode < 400 {
+			break
+		}
+		prewHost := server.ServerURL
+		if server = ar.nextServerIterator(); server == nil {
+			break
+		}
+		log.Warnf("Server %q failed to serve request %q. Attempting %q",
+			prewHost, req.URL.Path, server.ServerURL)
+	}
+	if server != nil {
+		// reset server iterator
+		for {
+			if ar.nextServerIterator() == nil {
+				break
+			}
+		}
+	}
+	return r, err
 }
 
 func NewApiClient(conf Config) (*ApiClient, error) {
@@ -173,9 +307,8 @@ type Config struct {
 
 func loadServerTrust(conf Config) (*x509.CertPool, error) {
 	if conf.ServerCert == "" {
-		// TODO: this is for pre-production version only to simplify tests.
-		// Make sure to remove in production version.
-		log.Warn("Server certificate not provided. Trusting all servers.")
+		// Returning nil will make tls.Config.RootCAs nil, which causes
+		// tls module to use system certs.
 		return nil, nil
 	}
 
@@ -187,11 +320,24 @@ func loadServerTrust(conf Config) (*x509.CertPool, error) {
 	// Read certificate file.
 	servcert, err := ioutil.ReadFile(conf.ServerCert)
 	if err != nil {
+		log.Errorf("%s is inaccessible: %s", conf.ServerCert, err.Error())
 		return nil, err
 	}
 
 	if len(servcert) == 0 {
-		return nil, errors.New("unable to find system and server certificates")
+		log.Errorf("Both %s and the system certificate pool are empty.",
+			conf.ServerCert)
+		return nil, errors.New("server certificate is empty")
+	}
+
+	block, _ := pem.Decode([]byte(servcert))
+	if block != nil {
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err == nil {
+			log.Infof("API Gateway certificate (in PEM format): \n%s", string(servcert))
+			log.Infof("Issuer: %s, Valid from: %s, Valid to: %s",
+				cert.Issuer.Organization, cert.NotBefore, cert.NotAfter)
+		}
 	}
 
 	if syscerts == nil {
@@ -223,7 +369,7 @@ func buildApiURL(server, url string) string {
 
 // Normally one minute, but used in tests to lower the interval to avoid
 // waiting.
-var exponentialBackoffSmallestUnit time.Duration = time.Minute
+var ExponentialBackoffSmallestUnit time.Duration = time.Minute
 
 // Simple algorithm: Start with one minute, and try three times, then double
 // interval (maxInterval is maximum) and try again. Repeat until we tried
@@ -231,7 +377,7 @@ var exponentialBackoffSmallestUnit time.Duration = time.Minute
 func GetExponentialBackoffTime(tried int, maxInterval time.Duration) (time.Duration, error) {
 	const perIntervalAttempts = 3
 
-	interval := 1 * exponentialBackoffSmallestUnit
+	interval := 1 * ExponentialBackoffSmallestUnit
 	nextInterval := interval
 
 	for c := 0; c <= tried; c += perIntervalAttempts {
@@ -246,12 +392,24 @@ func GetExponentialBackoffTime(tried int, maxInterval time.Duration) (time.Durat
 
 			// Don't use less than the smallest unit, usually one
 			// minute.
-			if maxInterval < exponentialBackoffSmallestUnit {
-				return exponentialBackoffSmallestUnit, nil
+			if maxInterval < ExponentialBackoffSmallestUnit {
+				return ExponentialBackoffSmallestUnit, nil
 			}
 			return maxInterval, nil
 		}
 	}
 
 	return interval, nil
+}
+
+// unmarshalErrorMessage unmarshals the error message contained in an
+// error request from the server.
+func unmarshalErrorMessage(r io.Reader) string {
+	e := new(struct {
+		Error string `json:"error"`
+	})
+	if err := json.NewDecoder(r).Decode(e); err != nil {
+		return fmt.Sprintf("failed to parse server response: %v", err)
+	}
+	return e.Error
 }

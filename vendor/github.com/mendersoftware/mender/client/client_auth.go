@@ -1,4 +1,4 @@
-// Copyright 2017 Northern.tech AS
+// Copyright 2019 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -15,10 +15,13 @@ package client
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
+	"time"
 
 	"github.com/mendersoftware/log"
 	"github.com/pkg/errors"
@@ -46,10 +49,45 @@ func (u *AuthClient) Request(api ApiRequester, server string, dataSrc AuthDataMe
 		return nil, errors.Wrapf(err, "failed to build authorization request")
 	}
 
-	log.Debugf("making authorization request to server %s with req: %s", server, req)
+	log.Debugf("making an authorization request (%s) to server %s", req.RequestURI, server)
 	rsp, err := api.Do(req)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to execute authorization request")
+		log.Errorf("Failure occured while executing authorization request: %#v", err)
+
+		// checking the detailed reason of the failure
+		if urlErr, ok := err.(*url.Error); ok {
+			switch certErr := urlErr.Err.(type) {
+			case x509.UnknownAuthorityError:
+				log.Error("Certificate is signed by unknown authority.")
+				log.Error("If you are using a self-signed certificate, make sure it is " +
+					"available locally to the Mender client in /etc/mender/server.crt and " +
+					"is configured properly in /etc/mender/mender.conf.")
+				log.Error("See https://docs.mender.io/troubleshooting/mender-client#" +
+					"certificate-signed-by-unknown-authority for more information.")
+
+				return nil, errors.Wrapf(err, "certificate signed by unknown authority")
+
+			case x509.CertificateInvalidError:
+				switch certErr.Reason {
+				case x509.Expired:
+					log.Error("Certificate has expired or is not yet valid.")
+					log.Errorf("Current clock is %s", time.Now())
+					log.Error("Verify that the clock on the device is correct " +
+						"and/or certificate expiration date is valid.")
+					log.Error("See https://docs.mender.io/troubleshooting/mender-client#" +
+						"certificate-expired-or-not-yet-valid for more information.")
+
+					return nil, errors.Wrapf(err, "certificate has expired")
+				default:
+					log.Errorf("Server certificate is invalid, reason: %#v", certErr.Reason)
+				}
+				return nil, errors.Wrapf(err, "certificate exists, but is invalid")
+			default:
+				log.Errorf("authorization request error: %v", certErr)
+			}
+		}
+		return nil, errors.Wrapf(err,
+			"generic error occured while executing authorization request")
 	}
 	defer rsp.Body.Close()
 
@@ -57,18 +95,18 @@ func (u *AuthClient) Request(api ApiRequester, server string, dataSrc AuthDataMe
 
 	switch rsp.StatusCode {
 	case http.StatusUnauthorized:
-		return nil, AuthErrorUnauthorized
+		return nil, NewAPIError(AuthErrorUnauthorized, rsp)
 	case http.StatusOK:
 		log.Debugf("receive response data")
 		data, err := ioutil.ReadAll(rsp.Body)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to receive authorization response data")
+			return nil, NewAPIError(errors.Wrapf(err, "failed to receive authorization response data"), rsp)
 		}
 
-		log.Debugf("received response data %v", data)
+		log.Debugf("received response data:  %v", data)
 		return data, nil
 	default:
-		return nil, errors.Errorf("unexpected authorization status %v", rsp.StatusCode)
+		return nil, NewAPIError(errors.Errorf("unexpected authorization status %v", rsp.StatusCode), rsp)
 	}
 }
 
