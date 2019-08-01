@@ -35,6 +35,7 @@ var (
 	currentDeviceType        string
 	debugMode                bool
 	substateReporting        bool
+	startupInterval          int
 
 	updatesPerformed  int
 	updatesLeftToFail int
@@ -69,6 +70,8 @@ func init() {
 	flag.BoolVar(&substateReporting, "substate", false, "send substate reporting")
 	flag.StringVar(&tenantToken, "tenant", "", "tenant key for account")
 
+	flag.IntVar(&startupInterval, "startup-interval", 0, "Define the size (milliseconds) of the uniform interval on which the clients will start. NOTE: This only applies with pregenerated keys")
+
 	mrand.Seed(time.Now().UnixNano())
 
 	updatesPerformed = 0
@@ -96,7 +99,9 @@ func main() {
 	keysMissing := menderClientCount - len(files)
 
 	if keysMissing <= 0 {
+		delta := time.Duration(startupInterval / menderClientCount)
 		for i := 0; i < menderClientCount; i++ {
+			time.Sleep(delta * time.Millisecond)
 			go clientScheduler(files[i])
 		}
 	} else {
