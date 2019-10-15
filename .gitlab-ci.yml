@@ -35,9 +35,21 @@ build:
     paths:
       - image.tar
 
-publish:binary:
+publish:build:
+  image: docker:git
   stage: publish
+  services:
+    - docker:dind
   dependencies:
-    - compile
+    - build
   script:
-    - echo "publish mender-stress-test-client binary to s3 here"
+    - docker load -i image.tar
+    - docker tag $SERVICE_IMAGE $DOCKER_REPOSITORY:$COMMIT_TAG
+    - docker tag $SERVICE_IMAGE $DOCKER_REPOSITORY:$CI_COMMIT_REF_SLUG
+    - echo -n $DOCKER_HUB_PASSWORD | docker login -u $DOCKER_HUB_USERNAME --password-stdin
+    - docker push $DOCKER_REPOSITORY:$COMMIT_TAG
+    - docker push $SERVICE_IMAGE
+  only:
+    - master
+  tags:
+    - docker
