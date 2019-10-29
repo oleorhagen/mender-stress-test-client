@@ -1,5 +1,7 @@
 # mender-stress-test-client
 
+[![Build Status](https://gitlab.com/Northern.tech/Mender/mender-stress-test-client/badges/master/pipeline.svg)](https://gitlab.com/Northern.tech/Mender/mender-stress-test-client/pipelines)
+
 The *mender-stress-test-client* is a dummy-client intended for simple testing of
 the Mender server functionality, or scale testing. It is not in any way a fully
 featured client. All it does is mimic a client's API, and download the update to
